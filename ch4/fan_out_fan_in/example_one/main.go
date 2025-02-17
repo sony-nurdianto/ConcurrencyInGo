@@ -5,13 +5,47 @@ import (
 	"sync"
 )
 
-// ✅ Perbaiki iterasi slice
+func repeatFn(done <-chan struct{}, fn func() int) <-chan int {
+	valueStream := make(chan int)
+
+	go func() {
+		defer close(valueStream)
+
+		for {
+			select {
+			case <-done:
+				return
+			case valueStream <- fn():
+			}
+		}
+	}()
+
+	return valueStream
+}
+
+func take(done <-chan struct{}, valueStream <-chan int, workernums int) <-chan int {
+	takeStream := make(chan int)
+
+	go func() {
+		defer close(takeStream)
+		for i := 0; i < workernums; i++ {
+			select {
+			case <-done:
+				return
+			case takeStream <- <-valueStream:
+			}
+		}
+	}()
+
+	return takeStream
+}
+
 func generator(done <-chan struct{}, n ...int) <-chan int {
 	out := make(chan int)
 
 	go func() {
 		defer close(out)
-		for _, num := range n { // ✅ Gunakan for _, num untuk iterasi slice
+		for _, num := range n {
 			select {
 			case <-done:
 				return
@@ -22,100 +56,61 @@ func generator(done <-chan struct{}, n ...int) <-chan int {
 	return out
 }
 
-// ✅ Tambahkan sync.WaitGroup untuk menutup channel
-func squareNum(done <-chan struct{}, numStream <-chan int, workerCount int) <-chan int {
-	out := make(chan int)
-	var wg sync.WaitGroup
+func multiplex(done <-chan struct{}, wg *sync.WaitGroup, multiplexedStream chan<- int, c <-chan int) {
+	defer wg.Done()
 
-	wg.Add(workerCount)
-	for i := 0; i < workerCount; i++ {
-		go func() {
-			defer wg.Done()
-			for n := range numStream {
-				select {
-				case <-done:
-					return
-				case out <- n * n:
-				}
-			}
-		}()
+	for i := range c {
+		select {
+		case <-done:
+			return
+		case multiplexedStream <- i:
+		}
 	}
-
-	go func() {
-		wg.Wait()
-		close(out) // ✅ Tutup channel setelah semua worker selesai
-	}()
-
-	return out
 }
 
-// ✅ Perbaiki defer wg.Done() dan baca channel dalam loop
 func merge(done <-chan struct{}, channels ...<-chan int) <-chan int {
 	var wg sync.WaitGroup
-	out := make(chan int)
+	multiplexedStream := make(chan int)
 
 	wg.Add(len(channels))
-	for _, ch := range channels {
-		go func(c <-chan int) {
-			defer wg.Done()
-			for val := range c { // ✅ Iterasi agar tidak hanya membaca satu nilai
-				select {
-				case <-done:
-					return
-				case out <- val:
-				}
-			}
-		}(ch)
+
+	for _, c := range channels {
+		go multiplex(done, &wg, multiplexedStream, c)
 	}
 
 	go func() {
 		wg.Wait()
-		close(out)
+		close(multiplexedStream)
 	}()
 
-	return out
+	return multiplexedStream
 }
 
-// ✅ Tambahkan fungsi tee untuk membagi channel
-func tee(done <-chan struct{}, in <-chan int) (<-chan int, <-chan int) {
-	out1 := make(chan int)
-	out2 := make(chan int)
+func squearedNum(done <-chan struct{}, stream <-chan int) <-chan int {
+	valueStream := make(chan int)
 
 	go func() {
-		defer close(out1)
-		defer close(out2)
-		for val := range in {
-			select {
-			case <-done:
-				return
-			case out1 <- val:
-			}
+		defer close(valueStream)
 
+		for n := range stream {
 			select {
 			case <-done:
 				return
-			case out2 <- val:
+			case valueStream <- n * n:
 			}
 		}
 	}()
 
-	return out1, out2
+	return valueStream
 }
 
 func main() {
 	done := make(chan struct{})
 	defer close(done)
 
-	numGen := generator(done, 1, 2, 3, 4, 5, 6, 7, 8, 9)
+	numGen := generator(done, 1, 2, 3, 4, 5, 6, 7, 9)
 
-	// ✅ Gunakan tee untuk menduplikasi stream
-	tee1, tee2 := tee(done, numGen)
-	squared1 := squareNum(done, tee1, 3)
-	squared2 := squareNum(done, tee2, 4)
-
-	merg := merge(done, squared1, squared2)
-
-	for m := range merg {
-		fmt.Println(m)
+	for v := range take(done, squearedNum(done, numGen), 3) {
+		fmt.Println(v)
 	}
 }
