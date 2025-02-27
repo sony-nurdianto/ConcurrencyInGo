@@ -68,23 +68,23 @@ func multiplex(done <-chan struct{}, wg *sync.WaitGroup, multiplexedStream chan<
 	}
 }
 
-func merge(done <-chan struct{}, channels ...<-chan int) <-chan int {
-	var wg sync.WaitGroup
-	multiplexedStream := make(chan int)
-
-	wg.Add(len(channels))
-
-	for _, c := range channels {
-		go multiplex(done, &wg, multiplexedStream, c)
-	}
-
-	go func() {
-		wg.Wait()
-		close(multiplexedStream)
-	}()
-
-	return multiplexedStream
-}
+// func merge(done <-chan struct{}, channels ...<-chan int) <-chan int {
+// 	var wg sync.WaitGroup
+// 	multiplexedStream := make(chan int)
+//
+// 	wg.Add(len(channels))
+//
+// 	for _, c := range channels {
+// 		go multiplex(done, &wg, multiplexedStream, c)
+// 	}
+//
+// 	go func() {
+// 		wg.Wait()
+// 		close(multiplexedStream)
+// 	}()
+//
+// 	return multiplexedStream
+// }
 
 func squearedNum(done <-chan struct{}, stream <-chan int) <-chan int {
 	valueStream := make(chan int)
